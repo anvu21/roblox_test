@@ -281,58 +281,61 @@ app.post('/retention-rates', async (req, res) => {
 
   try {
     const query = `
-      WITH new_users AS (
-        SELECT 
-          p.PlayerId,
-          p.created_at AS FirstPlayDate,
-          pt.TestType
-        FROM 
-          Player p
-          JOIN Playtime pt ON p.PlayerId = pt.PlayerId
-        WHERE 
-          p.created_at BETWEEN $1 AND $2
-          AND pt.TestType = ANY($3::text[])
-        GROUP BY p.PlayerId, p.created_at, pt.TestType
-      ),
-      retained_users AS (
-        SELECT 
-          nu.PlayerId,
-          nu.FirstPlayDate,
-          nu.TestType
-        FROM 
-          new_users nu
-          JOIN Playtime pt ON nu.PlayerId = pt.PlayerId
-        WHERE 
-          pt.StartTime BETWEEN nu.FirstPlayDate + interval '1 day' * ($4 - 1) 
-          AND nu.FirstPlayDate + interval '1 day' * $4
-          AND pt.TestType = nu.TestType
-        GROUP BY nu.PlayerId, nu.FirstPlayDate, nu.TestType
-      ),
-      retention_data AS (
-        SELECT 
-          nu.TestType,
-          DATE_TRUNC('day', nu.FirstPlayDate) AS CohortDate,
-          COUNT(DISTINCT nu.PlayerId) AS NewUsers,
-          COUNT(DISTINCT ru.PlayerId) AS RetainedUsers
-        FROM 
-          new_users nu
-          LEFT JOIN retained_users ru ON nu.PlayerId = ru.PlayerId AND nu.TestType = ru.TestType
-        GROUP BY 
-          nu.TestType, DATE_TRUNC('day', nu.FirstPlayDate)
-      )
-      SELECT 
-        TestType,
-        CohortDate,
-        NewUsers,
-        RetainedUsers,
-        CASE 
-          WHEN NewUsers > 0 THEN CAST((RetainedUsers::float / NewUsers) * 100 AS NUMERIC(5,2))
-          ELSE 0
-        END AS RetentionRate
-      FROM 
-        retention_data
-      ORDER BY 
-        TestType, CohortDate;
+      WITH date_range AS (
+  SELECT generate_series(DATE($1), DATE($2), '1 day'::interval) AS cohort_date
+),
+new_users AS (
+  SELECT
+    p.PlayerId,
+    DATE(p.created_at) AS FirstPlayDate,
+    pt.TestType
+  FROM
+    Player p
+    JOIN Playtime pt ON p.PlayerId = pt.PlayerId
+  WHERE
+    DATE(p.created_at) BETWEEN DATE($1) AND DATE($2)
+    AND pt.TestType = ANY($3::text[])
+  GROUP BY p.PlayerId, DATE(p.created_at), pt.TestType
+),
+retained_users AS (
+  SELECT
+    nu.PlayerId,
+    nu.FirstPlayDate,
+    nu.TestType
+  FROM
+    new_users nu
+    JOIN Playtime pt ON nu.PlayerId = pt.PlayerId
+  WHERE
+    DATE(pt.StartTime) = nu.FirstPlayDate + interval '1 day' * $4
+    AND pt.TestType = nu.TestType
+  GROUP BY nu.PlayerId, nu.FirstPlayDate, nu.TestType
+),
+retention_data AS (
+  SELECT
+    dr.cohort_date,
+    COALESCE(nu.TestType, $3[1]) AS TestType,
+    COUNT(DISTINCT nu.PlayerId) AS NewUsers,
+    COUNT(DISTINCT ru.PlayerId) AS RetainedUsers
+  FROM
+    date_range dr
+    LEFT JOIN new_users nu ON dr.cohort_date = nu.FirstPlayDate
+    LEFT JOIN retained_users ru ON nu.PlayerId = ru.PlayerId AND nu.TestType = ru.TestType
+  GROUP BY
+    dr.cohort_date, nu.TestType
+)
+SELECT
+  cohort_date AS CohortDate,
+  TestType,
+  NewUsers,
+  RetainedUsers,
+  CASE
+    WHEN NewUsers > 0 THEN ROUND(CAST((RetainedUsers::float / NewUsers) * 100 AS NUMERIC), 2)
+    ELSE 0
+  END AS RetentionRate
+FROM
+  retention_data
+ORDER BY
+  TestType, CohortDate;
     `;
 
     const result = await pool.query(query, [startDate, endDate, testTypes, retentionDays]);
