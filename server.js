@@ -181,7 +181,7 @@ app.post('/average-play-hours', async (req, res) => {
       SELECT
         DATE_TRUNC('day', StartTime) AS play_date,
         TestType,
-        AVG(TotalPlaytime) / 60 AS avg_hours
+        AVG(TotalPlaytime) / 3600 AS avg_hours
       FROM
         Playtime
       WHERE
@@ -213,7 +213,7 @@ app.post('/average-play-hours-hourly', async (req, res) => {
       SELECT
         DATE_TRUNC('hour', StartTime) AS play_hour,
         TestType,
-        AVG(TotalPlaytime) / 60 AS avg_hours
+        AVG(TotalPlaytime) / 3600 AS avg_hours
       FROM
         Playtime
       WHERE
