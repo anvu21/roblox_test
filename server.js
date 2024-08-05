@@ -97,7 +97,7 @@ app.post('/playeritem', async (req, res) => {
 
 
 app.post('/concurrent-users', async (req, res) => {
-  const { startDate, endDate, testTypes } = req.body;
+  const { startDate, endDate, testType } = req.body;
   try {
     const query = `
       SELECT 
@@ -114,7 +114,7 @@ app.post('/concurrent-users', async (req, res) => {
       ORDER BY 
         play_date, TestType;
     `;
-    const result = await pool.query(query, [startDate, endDate, testTypes]);
+    const result = await pool.query(query, [startDate, endDate, testType]);
     const data = result.rows.map(row => ({
       date: row.play_date,
       testType: row.testtype,
@@ -129,7 +129,7 @@ app.post('/concurrent-users', async (req, res) => {
 
 // Endpoint to get concurrent users per hour
 app.post('/concurrent-users-hourly', async (req, res) => {
-  const { startDate, endDate, testTypes  } = req.body;
+  const { startDate, endDate, testType  } = req.body;
   try {
     const query = `
       WITH hourly_intervals AS (
@@ -157,7 +157,7 @@ app.post('/concurrent-users-hourly', async (req, res) => {
         hi.hour, p.TestType;
     `;
     
-    const result = await pool.query(query, [startDate, endDate, testTypes]);
+    const result = await pool.query(query, [startDate, endDate, testType]);
     
     const data = result.rows.map(row => ({
       date: row.play_hour,
@@ -174,7 +174,7 @@ app.post('/concurrent-users-hourly', async (req, res) => {
 
 // Endpoint to get total play hours
 app.post('/average-play-hours', async (req, res) => {
-  const { startDate, endDate,testTypes  } = req.body;
+  const { startDate, endDate,testType  } = req.body;
   console.log(req.body);
   try {
     const query = `
@@ -192,7 +192,7 @@ app.post('/average-play-hours', async (req, res) => {
       ORDER BY
         play_date, TestType;
     `;
-    const result = await pool.query(query, [startDate, endDate,testTypes]);
+    const result = await pool.query(query, [startDate, endDate,testType]);
     const data = result.rows.map(row => ({
       date: row.play_date,
       testType: row.testtype,
@@ -207,7 +207,7 @@ app.post('/average-play-hours', async (req, res) => {
 
 // Endpoint to get total play hours per hour
 app.post('/average-play-hours-hourly', async (req, res) => {
-  const { startDate, endDate,testTypes  } = req.body;
+  const { startDate, endDate,testType  } = req.body;
   try {
     const query = `
       SELECT
@@ -224,7 +224,7 @@ app.post('/average-play-hours-hourly', async (req, res) => {
       ORDER BY
         play_hour, TestType;
     `;
-    const result = await pool.query(query, [startDate, endDate,testTypes ]);
+    const result = await pool.query(query, [startDate, endDate,testType ]);
     const data = result.rows.map(row => ({
       date: row.play_hour,
       testType: row.testtype,
@@ -238,8 +238,8 @@ app.post('/average-play-hours-hourly', async (req, res) => {
 });
 
 app.post('/total-purchases', async (req, res) => {
-  const { startDate, endDate, testTypes } = req.body;
-  console.log("Calculating total purchases from", startDate, "to", endDate, "for test types", testTypes);
+  const { startDate, endDate, testType } = req.body;
+  console.log("Calculating total purchases from", startDate, "to", endDate, "for test types", testType);
 
   try {
     const query = `
@@ -258,7 +258,7 @@ app.post('/total-purchases', async (req, res) => {
         purchase_date, pi.TestType;
     `;
 
-    const result = await pool.query(query, [startDate, endDate, testTypes]);
+    const result = await pool.query(query, [startDate, endDate, testType]);
 
     const data = result.rows.map(row => ({
       date: row.purchase_date,
@@ -276,87 +276,72 @@ app.post('/total-purchases', async (req, res) => {
 
 //retention rates 
 
+
 app.post('/retention-rates', async (req, res) => {
-  const { startDate, endDate, testTypes, retentionDays } = req.body;
+  const { startDate, endDate, retentionType, testType } = req.body;
+
+  let retentionDays;
+  switch (retentionType) {
+      case 'day1':
+          retentionDays = 1;
+          break;
+      case 'day7':
+          retentionDays = 7;
+          break;
+      case 'day30':
+          retentionDays = 30;
+          break;
+      default:
+          return res.status(400).json({ error: 'Invalid retentionType' });
+  }
 
   try {
-    const query = `
-      WITH date_range AS (
-  SELECT generate_series(DATE($1), DATE($2), '1 day'::interval) AS cohort_date
-),
-new_users AS (
-  SELECT
-    p.PlayerId,
-    DATE(p.created_at) AS FirstPlayDate,
-    pt.TestType
-  FROM
-    Player p
-    JOIN Playtime pt ON p.PlayerId = pt.PlayerId
-  WHERE
-    DATE(p.created_at) BETWEEN DATE($1) AND DATE($2)
-    AND pt.TestType = ANY($3::text[])
-  GROUP BY p.PlayerId, DATE(p.created_at), pt.TestType
-),
-retained_users AS (
-  SELECT
-    nu.PlayerId,
-    nu.FirstPlayDate,
-    nu.TestType
-  FROM
-    new_users nu
-    JOIN Playtime pt ON nu.PlayerId = pt.PlayerId
-  WHERE
-    DATE(pt.StartTime) = nu.FirstPlayDate + interval '1 day' * $4
-    AND pt.TestType = nu.TestType
-  GROUP BY nu.PlayerId, nu.FirstPlayDate, nu.TestType
+      const result = await pool.query(
+          `
+          
+      WITH player_first_play AS (
+    SELECT p.PlayerId, DATE(p.created_at) AS first_play_date
+    FROM Player p
+    WHERE DATE(p.created_at) BETWEEN $1::date AND $2::date
 ),
 retention_data AS (
-  SELECT
-    dr.cohort_date,
-    COALESCE(nu.TestType, $3[1]) AS TestType,
-    COUNT(DISTINCT nu.PlayerId) AS NewUsers,
-    COUNT(DISTINCT ru.PlayerId) AS RetainedUsers
-  FROM
-    date_range dr
-    LEFT JOIN new_users nu ON dr.cohort_date = nu.FirstPlayDate
-    LEFT JOIN retained_users ru ON nu.PlayerId = ru.PlayerId AND nu.TestType = ru.TestType
-  GROUP BY
-    dr.cohort_date, nu.TestType
+    SELECT 
+        pf.first_play_date,
+        COUNT(DISTINCT pf.PlayerId) AS initial_players,
+        $4::integer AS retention_days,
+        COUNT(DISTINCT CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM Playtime pt 
+                WHERE pt.PlayerId = pf.PlayerId 
+                AND DATE(pt.StartTime) = (pf.first_play_date + ($4::integer * INTERVAL '1 day'))
+                AND pt.TestType = $3
+            ) THEN pf.PlayerId 
+        END) AS retained_players
+    FROM player_first_play pf
+    WHERE (pf.first_play_date + ($4::integer * INTERVAL '1 day')) <= $2::date
+    GROUP BY pf.first_play_date
 )
-SELECT
-  cohort_date AS CohortDate,
-  TestType,
-  NewUsers,
-  RetainedUsers,
-  CASE
-    WHEN NewUsers > 0 THEN ROUND(CAST((RetainedUsers::float / NewUsers) * 100 AS NUMERIC), 2)
-    ELSE 0
-  END AS RetentionRate
-FROM
-  retention_data
-ORDER BY
-  TestType, CohortDate;
-    `;
+SELECT 
+    (first_play_date + INTERVAL '1 day')::date AS first_play_date,
+    $3 AS TestType,
+    initial_players,
+    retained_players,
+    retention_days,
+    ROUND(CAST(retained_players AS NUMERIC) / NULLIF(initial_players, 0) * 100, 2) AS retention_rate
+FROM retention_data
+ORDER BY first_play_date;
+          
+          `,
+          [startDate, endDate, testType, retentionDays]
+      );
 
-    const result = await pool.query(query, [startDate, endDate, testTypes, retentionDays]);
-
-    const data = result.rows.map(row => ({
-      date: row.cohortdate,
-      testType: row.testtype,
-      newUsers: parseInt(row.newusers, 10),
-      retainedUsers: parseInt(row.retainedusers, 10),
-      retentionRate: parseFloat(row.retentionrate)
-    }));
-
-    console.log('Retention data:', data); // Add this line for debugging
-
-    res.status(200).json(data);
+      res.json(result.rows);
   } catch (err) {
-    console.error('Error executing query', err.message, err.stack);
-    res.status(500).send('Server error');
+      console.error(err);
+      res.status(500).json({ error: 'An error occurred while calculating retention rates.' });
   }
 });
-
 
 app.get('/test-types', async (req, res) => {
   try {
@@ -366,8 +351,8 @@ app.get('/test-types', async (req, res) => {
       ORDER BY TestType;
     `;
     const result = await pool.query(query);
-    const testTypes = result.rows.map(row => row.testtype);
-    res.status(200).json(testTypes);
+    const testType = result.rows.map(row => row.testtype);
+    res.status(200).json(testType);
   } catch (err) {
     console.error('Error fetching test types:', err.message, err.stack);
     res.status(500).send('Server error');
