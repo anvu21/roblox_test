@@ -5,22 +5,34 @@ const cors = require('cors');  // Import the cors package
 const app = express();
 const port = 5000;
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
-});
+const pools = {};  // Create a pools object to store different pool instances
+
+function getPool(gameName) {
+  const dbName = gameName ? gameName : process.env.DB_NAME;
+  if (!pools[dbName]) {
+    pools[dbName] = new Pool({
+      user: process.env.DB_USER,
+      host: process.env.DB_HOST,
+      database: dbName,
+      password: process.env.DB_PASSWORD,
+      port: process.env.DB_PORT,
+    });
+  }
+  return pools[dbName];
+}
 
 app.use(express.json());
 app.use(cors());
+
 app.post('/playtime', async (req, res) => {
-  const { name, totalPlayTime, startTime, testType } = req.body;
+  const { name, totalPlayTime, startTime, testType, gameName } = req.body;
   console.log("Name", name);
   console.log("totalPlaytime", totalPlayTime);
   console.log("StartTime", startTime);
   console.log("testType", testType);
+  console.log("gameName", gameName);
+
+  const pool = getPool(gameName);
 
   try {
     console.log('Request data:', req.body);
@@ -57,7 +69,9 @@ app.post('/playtime', async (req, res) => {
 });
 
 app.post('/playeritem', async (req, res) => {
-  const { name, startTime, testType, itemPurchase } = req.body;
+  const { name, startTime, testType, itemPurchase, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   try {
     // Log the incoming request data for debugging
     console.log('Request data:', req.body);
@@ -94,10 +108,10 @@ app.post('/playeritem', async (req, res) => {
   }
 });
 
-
-
 app.post('/concurrent-users', async (req, res) => {
-  const { startDate, endDate, testType } = req.body;
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   try {
     const query = `
       SELECT 
@@ -127,9 +141,10 @@ app.post('/concurrent-users', async (req, res) => {
   }
 });
 
-// Endpoint to get concurrent users per hour
 app.post('/concurrent-users-hourly', async (req, res) => {
-  const { startDate, endDate, testType  } = req.body;
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   try {
     const query = `
       WITH hourly_intervals AS (
@@ -172,10 +187,10 @@ app.post('/concurrent-users-hourly', async (req, res) => {
   }
 });
 
-// Endpoint to get total play hours
 app.post('/average-play-hours', async (req, res) => {
-  const { startDate, endDate,testType  } = req.body;
-  console.log(req.body);
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   try {
     const query = `
       SELECT
@@ -192,7 +207,7 @@ app.post('/average-play-hours', async (req, res) => {
       ORDER BY
         play_date, TestType;
     `;
-    const result = await pool.query(query, [startDate, endDate,testType]);
+    const result = await pool.query(query, [startDate, endDate, testType]);
     const data = result.rows.map(row => ({
       date: row.play_date,
       testType: row.testtype,
@@ -205,9 +220,10 @@ app.post('/average-play-hours', async (req, res) => {
   }
 });
 
-// Endpoint to get total play hours per hour
 app.post('/average-play-hours-hourly', async (req, res) => {
-  const { startDate, endDate,testType  } = req.body;
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   try {
     const query = `
       SELECT
@@ -224,7 +240,7 @@ app.post('/average-play-hours-hourly', async (req, res) => {
       ORDER BY
         play_hour, TestType;
     `;
-    const result = await pool.query(query, [startDate, endDate,testType ]);
+    const result = await pool.query(query, [startDate, endDate, testType]);
     const data = result.rows.map(row => ({
       date: row.play_hour,
       testType: row.testtype,
@@ -238,7 +254,9 @@ app.post('/average-play-hours-hourly', async (req, res) => {
 });
 
 app.post('/total-purchases', async (req, res) => {
-  const { startDate, endDate, testType } = req.body;
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
   console.log("Calculating total purchases from", startDate, "to", endDate, "for test types", testType);
 
   try {
@@ -273,73 +291,69 @@ app.post('/total-purchases', async (req, res) => {
   }
 });
 
-
-//retention rates 
-
-
 app.post('/retention-rates', async (req, res) => {
-  const { startDate, endDate, retentionType, testType } = req.body;
+  const { startDate, endDate, retentionType, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
 
   let retentionDays;
   switch (retentionType) {
-      case 'day1':
-          retentionDays = 1;
-          break;
-      case 'day7':
-          retentionDays = 7;
-          break;
-      case 'day30':
-          retentionDays = 30;
-          break;
-      default:
-          return res.status(400).json({ error: 'Invalid retentionType' });
+    case 'day1':
+      retentionDays = 1;
+      break;
+    case 'day7':
+      retentionDays = 7;
+      break;
+    case 'day30':
+      retentionDays = 30;
+      break;
+    default:
+      return res.status(400).json({ error: 'Invalid retentionType' });
   }
 
   try {
-      const result = await pool.query(
-          `
-          
-      WITH player_first_play AS (
-    SELECT p.PlayerId, DATE(p.created_at) AS first_play_date
-    FROM Player p
-    WHERE DATE(p.created_at) BETWEEN $1::date AND $2::date
-),
-retention_data AS (
-    SELECT 
-        pf.first_play_date,
-        COUNT(DISTINCT pf.PlayerId) AS initial_players,
-        $4::integer AS retention_days,
-        COUNT(DISTINCT CASE 
-            WHEN EXISTS (
+    const result = await pool.query(
+      `
+        WITH player_first_play AS (
+          SELECT p.PlayerId, DATE(p.created_at) AS first_play_date
+          FROM Player p
+          WHERE DATE(p.created_at) BETWEEN $1::date AND $2::date
+        ),
+        retention_data AS (
+          SELECT 
+            pf.first_play_date,
+            COUNT(DISTINCT pf.PlayerId) AS initial_players,
+            $4::integer AS retention_days,
+            COUNT(DISTINCT CASE 
+              WHEN EXISTS (
                 SELECT 1 
                 FROM Playtime pt 
                 WHERE pt.PlayerId = pf.PlayerId 
                 AND DATE(pt.StartTime) = (pf.first_play_date + ($4::integer * INTERVAL '1 day'))
                 AND pt.TestType = $3
-            ) THEN pf.PlayerId 
-        END) AS retained_players
-    FROM player_first_play pf
-    WHERE (pf.first_play_date + ($4::integer * INTERVAL '1 day')) <= $2::date
-    GROUP BY pf.first_play_date
-)
-SELECT 
-    (first_play_date + INTERVAL '1 day')::date AS first_play_date,
-    $3 AS TestType,
-    initial_players,
-    retained_players,
-    retention_days,
-    ROUND(CAST(retained_players AS NUMERIC) / NULLIF(initial_players, 0) * 100, 2) AS retention_rate
-FROM retention_data
-ORDER BY first_play_date;
-          
-          `,
-          [startDate, endDate, testType, retentionDays]
-      );
+              ) THEN pf.PlayerId 
+            END) AS retained_players
+          FROM player_first_play pf
+          WHERE (pf.first_play_date + ($4::integer * INTERVAL '1 day')) <= $2::date
+          GROUP BY pf.first_play_date
+        )
+        SELECT 
+          (first_play_date + INTERVAL '1 day')::date AS first_play_date,
+          $3 AS TestType,
+          initial_players,
+          retained_players,
+          retention_days,
+          ROUND(CAST(retained_players AS NUMERIC) / NULLIF(initial_players, 0) * 100, 2) AS retention_rate
+        FROM retention_data
+        ORDER BY first_play_date;
+      `,
+      [startDate, endDate, testType, retentionDays]
+    );
 
-      res.json(result.rows);
+    res.json(result.rows);
   } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'An error occurred while calculating retention rates.' });
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while calculating retention rates.' });
   }
 });
 
@@ -358,7 +372,6 @@ app.get('/test-types', async (req, res) => {
     res.status(500).send('Server error');
   }
 });
-
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
