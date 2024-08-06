@@ -363,58 +363,49 @@ app.post('/retention', async (req, res) => {
 
     // Updated PostgreSQL query
     const query = `
-     WITH DateRange AS (
-    SELECT generate_series($1::date, $2::date, '1 day'::interval) AS date
+      WITH DateRange AS (
+  SELECT generate_series($1::date, $2::date, '1 day'::interval) AS date
 ),
 FirstPlaytime AS (
-    SELECT 
-        PlayerId,
-        TestType,
-        MIN(StartTime::date) AS FirstPlayDate
-    FROM Playtime
-    WHERE StartTime::date BETWEEN $1::date AND $2::date
-      AND TestType = ANY($3::text[])
-    GROUP BY PlayerId, TestType
+  SELECT 
+    PlayerId,
+    TestType,
+    DATE_TRUNC('day', MIN(StartTime)) AS FirstPlayDate
+  FROM Playtime
+  WHERE StartTime::date BETWEEN $1::date AND $2::date
+    AND TestType = ANY($3::text[])
+  GROUP BY PlayerId, TestType
 ),
-DailyPlayers AS (
-    SELECT 
-        fp.PlayerId,
-        fp.TestType,
-        fp.FirstPlayDate,
-        d.date
-    FROM FirstPlaytime fp
-    CROSS JOIN DateRange d
-    WHERE d.date >= fp.FirstPlayDate
-      AND d.date <= $2::date
-),
-ReturnedPlayers AS (
-    SELECT 
-        dp.FirstPlayDate AS JoinDate,
-        dp.TestType,
-        COUNT(DISTINCT dp.PlayerId) AS NewPlayerCount,
-        COUNT(DISTINCT CASE 
-            WHEN EXISTS (
-                SELECT 1 
-                FROM Playtime pt 
-                WHERE pt.PlayerId = dp.PlayerId 
-                  AND pt.StartTime::date = dp.date + INTERVAL '1 day'
-            ) THEN dp.PlayerId 
-        END) AS ReturnedPlayerCount
-    FROM DailyPlayers dp
-    GROUP BY dp.FirstPlayDate, dp.TestType
+DailyRetention AS (
+  SELECT 
+    fp.FirstPlayDate AS JoinDate,
+    fp.TestType,
+    COUNT(DISTINCT fp.PlayerId) AS NewPlayerCount,
+    COUNT(DISTINCT CASE 
+      WHEN EXISTS (
+        SELECT 1 
+        FROM Playtime pt
+        WHERE pt.PlayerId = fp.PlayerId 
+          AND DATE_TRUNC('day', pt.StartTime) = fp.FirstPlayDate + INTERVAL '1 day'
+          AND pt.TestType = fp.TestType
+      ) THEN fp.PlayerId 
+    END) AS ReturnedPlayerCount
+  FROM FirstPlaytime fp
+  GROUP BY fp.FirstPlayDate, fp.TestType
 )
 SELECT 
-    JoinDate,
-    TestType,
-    NewPlayerCount,
-    ReturnedPlayerCount,
-    CASE 
-        WHEN NewPlayerCount > 0 THEN 
-            ROUND((ReturnedPlayerCount::numeric / NewPlayerCount) * 100, 2)
-        ELSE 0 
-    END AS RetentionRate
-FROM ReturnedPlayers
-ORDER BY JoinDate, TestType;
+  dr.date AS JoinDate,
+  COALESCE(ret.TestType, $3[1]) AS TestType,
+  COALESCE(ret.NewPlayerCount, 0) AS NewPlayerCount,
+  COALESCE(ret.ReturnedPlayerCount, 0) AS ReturnedPlayerCount,
+  CASE 
+    WHEN COALESCE(ret.NewPlayerCount, 0) > 0 THEN 
+      ROUND((COALESCE(ret.ReturnedPlayerCount, 0)::numeric / ret.NewPlayerCount) * 100, 2)
+    ELSE 0 
+  END AS RetentionRate
+FROM DateRange dr
+LEFT JOIN DailyRetention ret ON ret.JoinDate = dr.date
+ORDER BY dr.date, ret.TestType;
     `;
 
     // Execute query
@@ -433,10 +424,7 @@ ORDER BY JoinDate, TestType;
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+
 
 app.get('/check-raw-data', async (req, res) => {
   const { gameName } = req.query;
