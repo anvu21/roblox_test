@@ -363,47 +363,58 @@ app.post('/retention', async (req, res) => {
 
     // Updated PostgreSQL query
     const query = `
-      WITH NewPlayers AS (
-        SELECT 
-          p.PlayerId,
-          p.Name,
-          pt.StartTime::date AS JoinDate,
-          pt.TestType,
-          ROW_NUMBER() OVER (PARTITION BY p.PlayerId ORDER BY pt.StartTime) AS PlayerRank
-        FROM Player p
-        JOIN Playtime pt ON p.PlayerId = pt.PlayerId
-        WHERE pt.StartTime::date BETWEEN $1::date AND $2::date
-          AND pt.TestType = ANY($3::text[])
-      ),
-      ReturnedPlayers AS (
-        SELECT 
-          np.JoinDate,
-          np.TestType,
-          COUNT(DISTINCT np.PlayerId) AS NewPlayerCount,
-          COUNT(DISTINCT CASE 
-            WHEN EXISTS (
-              SELECT 1 
-              FROM Playtime pt2 
-              WHERE pt2.PlayerId = np.PlayerId 
-                AND pt2.StartTime::date = np.JoinDate + INTERVAL '1 day'
-            ) THEN np.PlayerId 
-          END) AS ReturnedPlayerCount
-        FROM NewPlayers np
-        WHERE np.PlayerRank = 1
-        GROUP BY np.JoinDate, np.TestType
-      )
-      SELECT 
-        JoinDate,
+     WITH DateRange AS (
+    SELECT generate_series($1::date, $2::date, '1 day'::interval) AS date
+),
+FirstPlaytime AS (
+    SELECT 
+        PlayerId,
         TestType,
-        NewPlayerCount,
-        ReturnedPlayerCount,
-        CASE 
-          WHEN NewPlayerCount > 0 THEN 
+        MIN(StartTime::date) AS FirstPlayDate
+    FROM Playtime
+    WHERE StartTime::date BETWEEN $1::date AND $2::date
+      AND TestType = ANY($3::text[])
+    GROUP BY PlayerId, TestType
+),
+DailyPlayers AS (
+    SELECT 
+        fp.PlayerId,
+        fp.TestType,
+        fp.FirstPlayDate,
+        d.date
+    FROM FirstPlaytime fp
+    CROSS JOIN DateRange d
+    WHERE d.date >= fp.FirstPlayDate
+      AND d.date <= $2::date
+),
+ReturnedPlayers AS (
+    SELECT 
+        dp.FirstPlayDate AS JoinDate,
+        dp.TestType,
+        COUNT(DISTINCT dp.PlayerId) AS NewPlayerCount,
+        COUNT(DISTINCT CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM Playtime pt 
+                WHERE pt.PlayerId = dp.PlayerId 
+                  AND pt.StartTime::date = dp.date + INTERVAL '1 day'
+            ) THEN dp.PlayerId 
+        END) AS ReturnedPlayerCount
+    FROM DailyPlayers dp
+    GROUP BY dp.FirstPlayDate, dp.TestType
+)
+SELECT 
+    JoinDate,
+    TestType,
+    NewPlayerCount,
+    ReturnedPlayerCount,
+    CASE 
+        WHEN NewPlayerCount > 0 THEN 
             ROUND((ReturnedPlayerCount::numeric / NewPlayerCount) * 100, 2)
-          ELSE 0 
-        END AS RetentionRate
-      FROM ReturnedPlayers
-      ORDER BY JoinDate, TestType;
+        ELSE 0 
+    END AS RetentionRate
+FROM ReturnedPlayers
+ORDER BY JoinDate, TestType;
     `;
 
     // Execute query
