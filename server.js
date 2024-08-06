@@ -24,6 +24,19 @@ function getPool(gameName) {
 app.use(express.json());
 app.use(cors());
 
+
+async function getTestTypes(pool) {
+  const result = await pool.query('SELECT DISTINCT TestType FROM Playtime ORDER BY TestType');
+  return result.rows.map(row => row.testtype);
+}
+
+async function ensureTestTypes(pool, testType) {
+  if (!testType || testType.length === 0) {
+    testType = await getTestTypes(pool);
+  }
+  return testType;
+}
+
 app.post('/playtime', async (req, res) => {
   const { name, totalPlayTime, startTime, testType, gameName } = req.body;
   console.log("Name", name);
@@ -444,7 +457,66 @@ app.get('/check-raw-data', async (req, res) => {
   }
 });
 
+
+app.post('/average-revenue-per-player', async (req, res) => {
+  const { startDate, endDate, testType, gameName } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
+  console.log("Calculating average revenue per player from", startDate, "to", endDate, "for test types", testType);
+ 
+  try {
+    const query = `
+      WITH PlayerDays AS (
+        SELECT 
+          p.PlayerId,
+          generate_series(
+            GREATEST($1::date, p.created_at::date),
+            $2::date,
+            '1 day'::interval
+          )::date AS day
+        FROM Player p
+        WHERE p.created_at <= $2::date
+      ),
+      DailyRevenue AS (
+        SELECT
+          pd.day,
+          pi.TestType,
+          pd.PlayerId,
+          COALESCE(SUM(CAST(pi.ItemPurchase AS FLOAT)), 0) AS daily_revenue
+        FROM PlayerDays pd
+        LEFT JOIN PlayerItem pi ON pd.PlayerId = pi.PlayerId
+          AND pd.day = DATE_TRUNC('day', pi.StartTime)
+          AND pi.TestType = ANY($3::text[])
+        GROUP BY pd.day, pi.TestType, pd.PlayerId
+      )
+      SELECT
+        day AS purchase_date,
+        COALESCE(TestType, 'No Purchase') AS TestType,
+        AVG(daily_revenue) AS avg_revenue_per_player
+      FROM DailyRevenue
+      GROUP BY day, TestType
+      ORDER BY day, TestType;
+    `;
+   
+    const result = await pool.query(query, [startDate, endDate, testType]);
+   
+    const data = result.rows.map(row => ({
+      date: row.purchase_date,
+      testType: row.testtype,
+      avgRevenuePerPlayer: parseFloat(row.avg_revenue_per_player)
+    }));
+   
+    res.status(200).json(data);
+  } catch (err) {
+    console.error('Error executing query', err.message, err.stack);
+    res.status(500).send('Server error');
+  }
+});
 app.get('/test-types', async (req, res) => {
+  const {gameName } = req.body;
+
+  const pool = getPool(gameName);
+
   try {
     const query = `
       SELECT DISTINCT TestType
