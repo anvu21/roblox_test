@@ -4,7 +4,7 @@ require('dotenv').config();
 const cors = require('cors');  // Import the cors package
 const app = express();
 const port = 5000;
-
+const moment = require('moment-timezone');
 const pools = {};  // Create a pools object to store different pool instances
 
 function getPool(gameName) {
@@ -291,69 +291,157 @@ app.post('/total-purchases', async (req, res) => {
   }
 });
 
-app.post('/retention-rates', async (req, res) => {
-  const { startDate, endDate, retentionType, testType, gameName } = req.body;
+app.post('/average-revenue', async (req, res) => {
+  const { startDate, endDate, testType, gameName } = req.body;
   console.log("gameName", gameName);
   const pool = getPool(gameName);
-
-  let retentionDays;
-  switch (retentionType) {
-    case 'day1':
-      retentionDays = 1;
-      break;
-    case 'day7':
-      retentionDays = 7;
-      break;
-    case 'day30':
-      retentionDays = 30;
-      break;
-    default:
-      return res.status(400).json({ error: 'Invalid retentionType' });
+  console.log("Calculating average revenue from", startDate, "to", endDate, "for test types", testType);
+  
+  try {
+    const query = `
+      SELECT
+        DATE_TRUNC('day', pi.StartTime) AS purchase_date,
+        pi.TestType,
+        AVG(CAST(pi.ItemPurchase AS FLOAT)) AS avg_revenue
+      FROM
+        PlayerItem pi
+      WHERE
+        pi.StartTime BETWEEN $1 AND $2
+        AND pi.TestType = ANY($3::text[])
+      GROUP BY
+        DATE_TRUNC('day', pi.StartTime), pi.TestType
+      ORDER BY
+        purchase_date, pi.TestType;
+    `;
+    
+    const result = await pool.query(query, [startDate, endDate, testType]);
+    
+    const data = result.rows.map(row => ({
+      date: row.purchase_date,
+      testType: row.testtype,
+      avgRevenue: parseFloat(row.avg_revenue)
+    }));
+    
+    res.status(200).json(data);
+  } catch (err) {
+    console.error('Error executing query', err.message, err.stack);
+    res.status(500).send('Server error');
   }
+});
+/*
+app.post('/custom-query', async (req, res) => {
+  const { gameName, query, params } = req.body;
+  console.log("gameName", gameName);
+  const pool = getPool(gameName);
+  console.log("Executing custom query");
+  
+  try {
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    const result = await pool.query(query, params);
+    
+    res.status(200).json(result.rows);
+  } catch (err) {
+    console.error('Error executing custom query', err.message, err.stack);
+    res.status(500).send('Server error');
+  }
+});*/
+
+app.post('/retention', async (req, res) => {
+  try {
+    const { startDate, endDate, retentionType, testType, gameName } = req.body;
+    console.log("Request parameters:", { startDate, endDate, retentionType, testType, gameName });
+
+    // Validate input
+    if (!startDate || !endDate || !retentionType || !testType || !gameName) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    const pool = getPool(gameName);
+
+    // Updated PostgreSQL query
+    const query = `
+      WITH NewPlayers AS (
+        SELECT 
+          p.PlayerId,
+          p.Name,
+          pt.StartTime::date AS JoinDate,
+          pt.TestType,
+          ROW_NUMBER() OVER (PARTITION BY p.PlayerId ORDER BY pt.StartTime) AS PlayerRank
+        FROM Player p
+        JOIN Playtime pt ON p.PlayerId = pt.PlayerId
+        WHERE pt.StartTime::date BETWEEN $1::date AND $2::date
+          AND pt.TestType = ANY($3::text[])
+      ),
+      ReturnedPlayers AS (
+        SELECT 
+          np.JoinDate,
+          np.TestType,
+          COUNT(DISTINCT np.PlayerId) AS NewPlayerCount,
+          COUNT(DISTINCT CASE 
+            WHEN EXISTS (
+              SELECT 1 
+              FROM Playtime pt2 
+              WHERE pt2.PlayerId = np.PlayerId 
+                AND pt2.StartTime::date = np.JoinDate + INTERVAL '1 day'
+            ) THEN np.PlayerId 
+          END) AS ReturnedPlayerCount
+        FROM NewPlayers np
+        WHERE np.PlayerRank = 1
+        GROUP BY np.JoinDate, np.TestType
+      )
+      SELECT 
+        JoinDate,
+        TestType,
+        NewPlayerCount,
+        ReturnedPlayerCount,
+        CASE 
+          WHEN NewPlayerCount > 0 THEN 
+            ROUND((ReturnedPlayerCount::numeric / NewPlayerCount) * 100, 2)
+          ELSE 0 
+        END AS RetentionRate
+      FROM ReturnedPlayers
+      ORDER BY JoinDate, TestType;
+    `;
+
+    // Execute query
+    const { rows } = await pool.query(query, [startDate, endDate, testType]);
+
+    // Send response
+    res.json({
+      gameName,
+      retentionType,
+      data: rows
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'An error occurred while processing your request' });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+app.get('/check-raw-data', async (req, res) => {
+  const { gameName } = req.query;
+  const pool = getPool(gameName);
 
   try {
-    const result = await pool.query(
-      `
-        WITH player_first_play AS (
-          SELECT p.PlayerId, DATE(p.created_at) AS first_play_date
-          FROM Player p
-          WHERE DATE(p.created_at) BETWEEN $1::date AND $2::date
-        ),
-        retention_data AS (
-          SELECT 
-            pf.first_play_date,
-            COUNT(DISTINCT pf.PlayerId) AS initial_players,
-            $4::integer AS retention_days,
-            COUNT(DISTINCT CASE 
-              WHEN EXISTS (
-                SELECT 1 
-                FROM Playtime pt 
-                WHERE pt.PlayerId = pf.PlayerId 
-                AND DATE(pt.StartTime) = (pf.first_play_date + ($4::integer * INTERVAL '1 day'))
-                AND pt.TestType = $3
-              ) THEN pf.PlayerId 
-            END) AS retained_players
-          FROM player_first_play pf
-          WHERE (pf.first_play_date + ($4::integer * INTERVAL '1 day')) <= $2::date
-          GROUP BY pf.first_play_date
-        )
-        SELECT 
-          (first_play_date + INTERVAL '1 day')::date AS first_play_date,
-          $3 AS TestType,
-          initial_players,
-          retained_players,
-          retention_days,
-          ROUND(CAST(retained_players AS NUMERIC) / NULLIF(initial_players, 0) * 100, 2) AS retention_rate
-        FROM retention_data
-        ORDER BY first_play_date;
-      `,
-      [startDate, endDate, testType, retentionDays]
-    );
-
-    res.json(result.rows);
+    const playerResult = await pool.query('SELECT * FROM Player ORDER BY created_at LIMIT 10');
+    const playtimeResult = await pool.query('SELECT * FROM Playtime ORDER BY StartTime LIMIT 10');
+    
+    res.json({
+      players: playerResult.rows,
+      playtimes: playtimeResult.rows
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'An error occurred while calculating retention rates.' });
+    console.error("Error checking raw data:", err);
+    res.status(500).json({ error: 'An error occurred while checking raw data.' });
   }
 });
 
