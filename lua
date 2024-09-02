@@ -1,7 +1,7 @@
 local HttpService = game:GetService("HttpService")
 
 -- Replace with your actual endpoint
-local playtimeEndpoint = "http://localhost:5000/playtime"
+local playtimeEndpoint = "http://44.204.194.19:5000/playtime"
 local spendingEndpoint = "http://localhost:5000/playeritem"
 
 local function logPlaytime(player, startTime, totalPlayTime, testType)
