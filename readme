@@ -1,171 +1,166 @@
-aunch an EC2 instance:
-
-    Instance type: t2.micro
-    AMI: Amazon Linux 2023
-    Security Group: Allow HTTP (port 80), HTTPS (port 443), and custom TCP (port 3000 and 5432) traffic.
-
-Connect to the EC2 instance:
-
-sh
-
-    ssh -i your-key-pair.pem ec2-user@<your-ec2-public-ip>
-
-2. Setting Up PostgreSQL
-
-    Update the package list:
-
-    sh
-
-sudo dnf update -y
-
-Install PostgreSQL:
-
-sh
-
-sudo dnf install -y postgresql15.x86_64 postgresql15-server
-
-Initialize PostgreSQL database:
-
-sh
-
-sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
-
-Start and enable PostgreSQL service:
-
-sh
-
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-
-Switch to the postgres user and create the database and user:
-
-sh
-
-sudo -i -u postgres
-psql
-CREATE DATABASE test;
-CREATE USER postgres WITH PASSWORD 'your_db_password';
-GRANT ALL PRIVILEGES ON DATABASE test TO postgres;
-\q
-exit
-
-Allow remote connections to PostgreSQL:
-
-    Edit the PostgreSQL configuration file:
-
-    sh
-
-sudo nano /var/lib/pgsql/data/postgresql.conf
-
-    Uncomment and set listen_addresses to '*'.
-
-Edit the pg_hba.conf file:
-
-sh
-
-sudo nano /var/lib/pgsql/data/pg_hba.conf
-
-    Add the following line:
-
-    plaintext
-
-        host    all             all             0.0.0.0/0               md5
-
-Restart PostgreSQL service:
-
-sh
-
-    sudo systemctl restart postgresql
-
-3. Setting Up Node.js and Git
-
-    Install Node.js and Git:
-
-    sh
-
-    curl -sL https://rpm.nodesource.com/setup_20.x | sudo -E bash -
-    sudo yum install -y nodejs git
-
-4. Cloning the Project Repository
-
-    Clone your project repository from GitHub:
-
-    sh
-
-    git clone https://github.com/anvu21/roblox_test.git
-    cd roblox_test
-
-5. Installing Project Dependencies
-
-    Install dependencies:
-
-    sh
-
-    npm install
-
-6. Setting Up the Database
-
-    Create the tables manually:
-
-    sh
-
-    sudo -i -u postgres
-    psql
-    \c test
-
-    CREATE TABLE Player (
-        PlayerId SERIAL PRIMARY KEY,
-        Name VARCHAR(255) NOT NULL
-    );
-
-    CREATE TABLE Playtime (
-        PlaytimeID SERIAL PRIMARY KEY,
-        PlayerId INT REFERENCES Player(PlayerId),
-        Total_playTime INT NOT NULL,
-        A_or_B VARCHAR(50) NOT NULL
-    );
-
-    CREATE TABLE PlayerItem (
-        PlayerItemId SERIAL PRIMARY KEY,
-        PlayerId INT REFERENCES Player(PlayerId),
-        A_or_B VARCHAR(50) NOT NULL,
-        Item_purchase VARCHAR(255) NOT NULL
-    );
-
-    \q
-    exit
-
-7. Configuring Environment Variables
-
-    Create a .env file in your project directory:
-
-    sh
-
-nano .env
-
-    Add the following contents:
-
-    plaintext
-
-        DB_USER=postgres
-        DB_HOST=localhost
-        DB_NAME=test
-        DB_PASSWORD=your_db_password
-        DB_PORT=5432
-        SECRET_KEY=your_secret_key
-
-8. Starting the Application with PM2
-
-    Install PM2 globally:
-
-    sh
-
-sudo npm install -g pm2
-
-Start the application:
-
-sh
-
-pm2 start server.js
-pm2 startup
-pm2 save
+# Roblox Test Project
+
+This project sets up a Node.js application with a PostgreSQL database, designed to run on an Amazon EC2 instance.
+
+## Table of Contents
+1. [Prerequisites](#prerequisites)
+2. [EC2 Instance Setup](#ec2-instance-setup)
+3. [PostgreSQL Setup](#postgresql-setup)
+4. [Node.js and Git Installation](#nodejs-and-git-installation)
+5. [Project Setup](#project-setup)
+6. [Database Configuration](#database-configuration)
+7. [Environment Variables](#environment-variables)
+8. [Running the Application](#running-the-application)
+9. [Troubleshooting](#troubleshooting)
+10. [Security Considerations](#security-considerations)
+
+## Prerequisites
+
+- An AWS account
+- Basic knowledge of AWS EC2, SSH, and command-line operations
+- A GitHub account with your project repository
+
+## EC2 Instance Setup
+
+1. Launch an EC2 instance with the following specifications:
+   - Instance type: t2.micro
+   - AMI: Amazon Linux 2023
+   - Security Group: Allow inbound traffic for HTTP (80), HTTPS (443), SSH (22), and custom TCP (3000 and 5432)
+
+2. Connect to your EC2 instance:
+   ```
+   ssh -i your-key-pair.pem ec2-user@<your-ec2-public-ip>
+   ```
+
+## PostgreSQL Setup
+
+1. Update the package list and install PostgreSQL:
+   ```
+   sudo dnf update -y
+   sudo dnf install -y postgresql15.x86_64 postgresql15-server
+   ```
+
+2. Initialize and start PostgreSQL:
+   ```
+   sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
+   sudo systemctl start postgresql
+   sudo systemctl enable postgresql
+   ```
+
+3. Create the database and user:
+   ```
+   sudo -i -u postgres
+   psql
+   CREATE DATABASE your_database_name;
+   CREATE USER your_username WITH PASSWORD 'your_secure_password';
+   GRANT ALL PRIVILEGES ON DATABASE your_database_name TO your_username;
+   \q
+   exit
+   ```
+
+   Replace `your_database_name`, `your_username`, and `your_secure_password` with your chosen values.
+
+4. Configure PostgreSQL for remote connections:
+   - Edit `/var/lib/pgsql/data/postgresql.conf`:
+     Set `listen_addresses = '*'`
+   - Edit `/var/lib/pgsql/data/pg_hba.conf`:
+     Add `host all all 0.0.0.0/0 md5`
+
+5. Restart PostgreSQL:
+   ```
+   sudo systemctl restart postgresql
+   ```
+
+## Node.js and Git Installation
+
+Install Node.js and Git:
+```
+curl -sL https://rpm.nodesource.com/setup_20.x | sudo -E bash -
+sudo yum install -y nodejs git
+```
+
+## Project Setup
+
+1. Clone the project repository:
+   ```
+   git clone https://github.com/your-username/your-repo-name.git
+   cd your-repo-name
+   ```
+
+   Replace `your-username` and `your-repo-name` with your GitHub username and repository name.
+
+2. Install project dependencies:
+   ```
+   npm install
+   ```
+
+## Database Configuration
+
+Create the necessary tables in your PostgreSQL database:
+```sql
+CREATE TABLE Player (
+    PlayerId SERIAL PRIMARY KEY,
+    Name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE Playtime (
+    PlaytimeID SERIAL PRIMARY KEY,
+    PlayerId INT REFERENCES Player(PlayerId),
+    Total_playTime INT NOT NULL,
+    A_or_B VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE PlayerItem (
+    PlayerItemId SERIAL PRIMARY KEY,
+    PlayerId INT REFERENCES Player(PlayerId),
+    A_or_B VARCHAR(50) NOT NULL,
+    Item_purchase VARCHAR(255) NOT NULL
+);
+```
+
+## Environment Variables
+
+Create a `.env` file in the project root with the following content:
+```
+DB_USER=your_username
+DB_HOST=localhost
+DB_NAME=your_database_name
+DB_PASSWORD=your_secure_password
+DB_PORT=PASSWORD
+SECRET_KEY=your_secret_key
+```
+
+Replace the placeholders with your actual database credentials and a secure secret key.
+
+## Running the Application
+
+1. Install PM2 globally:
+   ```
+   sudo npm install -g pm2
+   ```
+
+2. Start the application with PM2:
+   ```
+   pm2 start server.js
+   pm2 startup
+   pm2 save
+   ```
+
+## Troubleshooting
+
+If you encounter any issues, please check the following:
+- Ensure all services (PostgreSQL, Node.js) are running
+- Verify that your `.env` file contains the correct database credentials
+- Check the EC2 instance security group allows traffic on the required ports
+- Review PM2 logs: `pm2 logs`
+
+For further assistance, please open an issue in the GitHub repository.
+
+## Security Considerations
+
+1. Never commit your `.env` file or any file containing sensitive information to version control.
+2. Use strong, unique passwords for your database and other services.
+3. Regularly update your system and dependencies to patch security vulnerabilities.
+4. Consider using AWS Secrets Manager or similar services for managing sensitive information in production environments.
+5. Implement proper authentication and authorization in your application.
+6. Use HTTPS for all communications in production environments.
